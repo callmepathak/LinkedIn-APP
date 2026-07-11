@@ -1,0 +1,42 @@
+Question: why we don't require discovery server on Kubernetes:
+
+Answer:
+
+In a traditional microservices architecture, we use a Discovery Server like
+Eureka because service instances are dynamic and their IP addresses change frequently.
+Each service registers itself with Eureka, and other services query Eureka to discover
+the current location of a service.
+
+In Kubernetes, a separate Discovery Server is generally not required because Kubernetes
+ provides built-in service discovery through Services and CoreDNS (previously kube-dns).
+
+When we create a Kubernetes Service, Kubernetes automatically registers a DNS entry for
+that service. For example, if we create a Service named user-service,
+CoreDNS automatically makes it available as:
+
+user-service
+or
+user-service.default.svc.cluster.local
+
+Any pod in the cluster can directly communicate using this DNS name:
+
+http://user-service:8080
+
+CoreDNS resolves the service name to the Service's ClusterIP, and Kubernetes
+ automatically load-balances requests across the healthy pods behind that service.
+
+Additionally, if pods are scaled up, scaled down, or restarted, Kubernetes automatically
+ updates the service endpoints. Therefore, there is no need for manual service
+  registration or a separate discovery component like Eureka.
+
+So, Kubernetes Service + CoreDNS together provide the same functionality that Eureka
+offers, making a Discovery Server redundant in most Kubernetes deployments.
+
+Short Interview Version
+
+We don't need Eureka in Kubernetes because Kubernetes has built-in service discovery.
+Every Kubernetes Service gets a DNS name through CoreDNS. Services communicate using
+ names like http://user-service instead of querying Eureka. CoreDNS resolves the service
+  name to the appropriate pods, and Kubernetes automatically handles registration,
+   discovery, health checks, and load balancing. Therefore, Eureka's responsibilities
+    are already covered by Kubernetes itself.
