@@ -21,6 +21,10 @@ public class WebMvcConfigure implements WebMvcConfigurer {
                         "/v3/api-docs/**"
                 );
     }
+    /*
+    Note:
+    means: Apply this interceptor to EVERY SINGLE REQUEST
+     */
 }
 //
 //

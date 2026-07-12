@@ -1,0 +1,453 @@
+Step 1: How your application is designed
+
+You have two ways to access the Connections Service.
+
+Method 1: Through API Gateway (Production)
+Browser/Postman
+      │
+      ▼
+API Gateway (8080)
+      │
+Authentication Filter
+      │
+Extracts UserId from JWT
+      │
+Adds Header
+X-User-Id : 101
+      │
+      ▼
+Connections Service (9030)
+      │
+RequestInterceptor
+      │
+Reads X-User-Id
+      │
+Controller
+
+Everything works because the API Gateway adds the required header.
+
+Method 2: Directly accessing the service
+Browser
+      │
+      ▼
+Connections Service (9030)
+
+Here,
+
+API Gateway is completely skipped.
+
+So nobody adds
+
+X-User-Id
+Step 2: What happens when you open Swagger?
+
+You typed
+
+http://localhost:9030/connections/swagger-ui/index.html
+
+The request flow becomes
+
+Browser
+    │
+    ▼
+Connections Service
+
+Notice
+
+API Gateway
+
+is not in the flow.
+
+Therefore
+
+X-User-Id
+
+doesn't exist.
+
+Step 3: Spring Boot receives the request
+
+The first thing Spring MVC does is
+
+Incoming Request
+      │
+      ▼
+DispatcherServlet
+
+Before calling your controller,
+
+Spring checks
+
+Are there any Interceptors?
+
+Yes.
+
+You registered one.
+
+RequestInterceptor
+Step 4: How was it registered?
+
+Your original configuration
+
+@Override
+public void addInterceptors(InterceptorRegistry registry) {
+    registry.addInterceptor(requestInterceptor);
+}
+
+means
+
+Apply this interceptor to EVERY SINGLE REQUEST
+
+So
+
+/connections/users
+
+✔
+
+/connections/posts
+
+✔
+
+/connections/swagger-ui
+
+✔
+
+/connections/v3/api-docs
+
+✔
+
+Everything
+
+Spring never differentiates between Swagger and business APIs.
+
+Step 5: Request enters RequestInterceptor
+
+Your code
+
+String userId = request.getHeader("X-User-Id");
+
+Browser never sent
+
+X-User-Id
+
+So
+
+userId = null
+
+Then
+
+Long.valueOf(userId);
+
+becomes
+
+Long.valueOf(null);
+
+Java internally tries
+
+Parse "null" into Long
+
+Impossible.
+
+So Java throws
+
+NumberFormatException
+
+whose message is
+
+Cannot parse null string
+
+Exactly the error you saw.
+
+Why did Swagger fail before even opening?
+
+Many people think
+
+Browser
+      │
+Swagger UI
+
+No.
+
+Actually
+
+Browser
+      │
+      ▼
+RequestInterceptor
+      │
+      ▼
+Swagger Controller
+
+Your interceptor executes before Swagger.
+
+Since the interceptor throws an exception,
+
+Swagger never gets a chance to execute.
+
+Visual Flow
+Browser
+      │
+      ▼
+DispatcherServlet
+      │
+      ▼
+RequestInterceptor
+      │
+Long.valueOf(null)
+      │
+Exception
+      │
+Response
+{
+   "Cannot parse null string"
+}
+
+Swagger controller is never reached.
+
+Why did changing WebMvcConfigurer fix it?
+
+Original
+
+registry.addInterceptor(requestInterceptor);
+
+means
+
+Apply interceptor on
+
+Everything.
+
+New configuration
+
+registry.addInterceptor(requestInterceptor)
+        .excludePathPatterns(
+                "/swagger-ui/**",
+                "/swagger-ui.html",
+                "/v3/api-docs/**"
+        );
+
+Now Spring internally stores
+
+Interceptor
+
+Apply to
+
+ALL URLs
+
+EXCEPT
+
+/swagger-ui/**
+/swagger-ui.html
+/v3/api-docs/**
+
+Now suppose the request is
+
+/connections/swagger-ui/index.html
+
+Spring checks
+
+Does it match
+
+/swagger-ui/**
+
+?
+
+Yes.
+
+Therefore
+
+Skip RequestInterceptor.
+
+Flow becomes
+
+Browser
+      │
+      ▼
+DispatcherServlet
+      │
+      ▼
+Swagger Controller
+      │
+Swagger UI
+
+No exception.
+
+What about business APIs?
+
+Suppose request is
+
+/connections/request/15
+
+Spring checks
+
+Does it match
+
+/swagger-ui/**
+
+No
+
+/v3/api-docs/**
+
+No
+
+Then
+
+Run RequestInterceptor.
+
+Now flow is
+
+Browser
+     │
+     ▼
+Gateway
+     │
+Adds X-User-Id
+     │
+Connections Service
+     │
+RequestInterceptor
+     │
+Reads X-User-Id
+     │
+Controller
+
+Everything works.
+
+Why did we also change RequestInterceptor?
+
+Your old code
+
+String userId = request.getHeader("X-User-Id");
+
+AuthContextHolder.setCurrentUserId(Long.valueOf(userId));
+
+assumes
+
+"The header will always be present."
+
+That assumption isn't always true.
+
+A request could reach the service:
+
+without the Gateway,
+from Postman,
+from another microservice,
+due to a configuration mistake.
+
+In those cases,
+
+Long.valueOf(null)
+
+would crash the application.
+
+So we changed it to
+
+if (userId == null || userId.isBlank()) {
+    response.setStatus(401);
+    return false;
+}
+
+Now instead of crashing,
+
+the interceptor returns a proper response:
+
+401 Unauthorized
+
+This is much better than an unexpected
+
+500 Internal Server Error
+
+because the client immediately knows the request is missing authentication information.
+
+Why use both excludePathPatterns() and the null check?
+
+They solve different problems.
+
+excludePathPatterns(...)
+
+Controls which URLs should bypass the interceptor.
+
+Swagger
+↓
+
+Don't execute interceptor.
+Null check inside the interceptor
+
+Protects all other requests from invalid or missing headers.
+
+Business API
+↓
+
+Header missing
+
+↓
+
+Return 401
+
+↓
+Don't crash.
+
+
+Final Production Flow
+
+Swagger Request
+
+Browser
+    │
+    ▼
+DispatcherServlet
+    │
+    ▼
+WebMvcConfigurer
+    │
+    ▼
+Matches excluded path?
+    │
+   Yes
+    │
+    ▼
+Skip RequestInterceptor
+    │
+    ▼
+Swagger Controller
+    │
+    ▼
+Swagger UI Opens
+
+
+
+Business API Request
+
+Browser
+    │
+    ▼
+API Gateway
+    │
+AuthenticationFilter
+    │
+Adds X-User-Id
+    │
+    ▼
+Connections Service
+    │
+DispatcherServlet
+    │
+WebMvcConfigurer
+    │
+Not an excluded path
+    │
+    ▼
+RequestInterceptor
+    │
+Read X-User-Id
+    │
+Store in AuthContextHolder
+    │
+Controller
+    │
+Response
+
+This separation of responsibilities is the standard approach in Spring applications:
+
+WebMvcConfigurer decides which requests should pass through the interceptor.
+RequestInterceptor performs authentication/authorization logic only for the requests it receives.
+
+That makes the configuration cleaner, easier to maintain, and avoids mixing URL-routing decisions with authentication logic.
